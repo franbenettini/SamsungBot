@@ -94,10 +94,15 @@ def check_product_in_stock(url: str, browser) -> bool | None:
     page = None
     try:
         page = browser.new_page(user_agent=USER_AGENT, locale="es-AR")
-        page.goto(url, wait_until="networkidle", timeout=30000)
-        # Le damos un margen extra a los componentes que tardan en
-        # consultar el stock después del renderizado inicial.
-        page.wait_for_timeout(3000)
+        # OJO: no usamos wait_until="networkidle" porque estas páginas
+        # (Samsung/VTEX) tienen scripts de tracking, chat, banners, etc.
+        # que siguen pidiendo cosas a la red sin parar, y networkidle
+        # nunca llega a cumplirse -> termina en timeout siempre.
+        # En cambio esperamos a que el HTML esté cargado y le damos un
+        # margen fijo para que los componentes de React terminen de
+        # pintar el estado real de stock.
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(6000)
         html = page.content()
     except Exception as exc:
         print(f"  [ERROR] No se pudo cargar {url}: {exc}")
