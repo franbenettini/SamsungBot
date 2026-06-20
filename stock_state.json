@@ -2,11 +2,16 @@
   "https://shop.samsung.com/ar/barra-de-sonido-hw-b450-con-subwoofer/p?skuId=140026": {
     "name": "Barra de Sonido HW-B450",
     "in_stock": true,
-    "last_checked": "2026-06-20 14:31:14"
+    "last_checked": "2026-06-20 14:45:30"
   },
   "https://www.samsung.com/ar/audio-devices/soundbar/b550-black-hw-b555-zb/": {
     "name": "Barra de Sonido HW-B555",
     "in_stock": false,
-    "last_checked": "2026-06-20 14:31:16"
+    "last_checked": "2026-06-20 14:45:45"
+  },
+  "https://shop.samsung.com/ar/barra-de-sonido-2-1ch-hw-c450/p": {
+    "name": "Barra de Sonido HW-C450",
+    "in_stock": true,
+    "last_checked": "2026-06-20 14:45:37"
   }
 }
