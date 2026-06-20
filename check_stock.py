@@ -36,14 +36,6 @@ from playwright.sync_api import sync_playwright
 # ---------------------------------------------------------------------------
 PRODUCTS = [
     {
-        "name": "Barra de Sonido HW-B450",
-        "url": "https://shop.samsung.com/ar/barra-de-sonido-hw-b450-con-subwoofer/p?skuId=140026",
-    },
-    {
-        "name": "Barra de Sonido HW-C450",
-        "url": "https://shop.samsung.com/ar/barra-de-sonido-2-1ch-hw-c450/p",
-    },
-    {
         "name": "Barra de Sonido HW-B555",
         "url": "https://www.samsung.com/ar/audio-devices/soundbar/b550-black-hw-b555-zb/",
     },
