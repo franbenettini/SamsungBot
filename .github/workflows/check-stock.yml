@@ -25,7 +25,9 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install requests
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
 
       - name: Chequear stock
         env:
@@ -39,4 +41,15 @@ jobs:
           git config user.email "stock-bot@users.noreply.github.com"
           git add stock_state.json
           git diff --quiet --cached || git commit -m "Actualiza estado de stock [skip ci]"
-          git push
+
+          # Reintenta el push si otra corrida pisó el remoto mientras tanto
+          # (pasa si se dispara manualmente justo antes/después de la
+          # corrida programada, o si dos corridas se solapan).
+          for i in 1 2 3 4 5; do
+            if git push; then
+              break
+            fi
+            echo "Push rechazado, reintentando con git pull --rebase (intento $i)..."
+            git pull --rebase --autostash
+            sleep $((RANDOM % 5 + 1))
+          done

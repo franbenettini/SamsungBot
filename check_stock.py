@@ -10,6 +10,14 @@ Si alguno pasó de "sin stock" a "con stock" desde la corrida anterior,
 ese ítem se destaca arriba de todo con 🟢 para que no se pierda entre
 el resto.
 
+IMPORTANTE: estas páginas son aplicaciones de una sola página (SPA/React,
+motor VTEX). El estado real de stock (botón de compra vs. formulario de
+"avisame cuando haya stock") se arma con JavaScript DESPUÉS de la carga
+inicial. Por eso este script usa Playwright (un navegador headless real)
+en vez de simplemente descargar el HTML con requests: si usáramos
+requests, nunca veríamos el contenido que JS agrega y el chequeo de stock
+sería incorrecto.
+
 El estado anterior se guarda en stock_state.json, que el workflow
 de GitHub Actions commitea de vuelta al repo en cada corrida.
 """
@@ -21,6 +29,7 @@ import time
 from pathlib import Path
 
 import requests
+from playwright.sync_api import sync_playwright
 
 # ---------------------------------------------------------------------------
 # Configuración: agregá / quitá modelos acá
@@ -40,22 +49,26 @@ PRODUCTS = [
     },
 ]
 
-# Frase que aparece en la página cuando el producto NO tiene stock.
-# Si esta frase NO aparece en el HTML, asumimos que hay stock.
-OUT_OF_STOCK_MARKER = "Producto sin stock"
+# Frases que aparecen en la página cuando el producto NO tiene stock.
+# Si CUALQUIERA de estas frases aparece en el HTML ya renderizado, asumimos
+# que no hay stock, sin importar lo que diga el metadato "instock" (que no
+# refleja el stock real disponible para compra).
+OUT_OF_STOCK_MARKERS = [
+    "Producto sin stock",
+    "Dejanos tus datos para contactarte cuando vuelva a estar disponible",
+    "Recibí una alerta de stock",
+    "We will email you when inventory is added",
+]
 
 STATE_FILE = Path(__file__).parent / "stock_state.json"
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "es-AR,es;q=0.9",
-}
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def load_state() -> dict:
@@ -70,21 +83,32 @@ def save_state(state: dict) -> None:
     )
 
 
-def check_product_in_stock(url: str) -> bool | None:
+def check_product_in_stock(url: str, browser) -> bool | None:
     """
-    Devuelve True si hay stock, False si no hay, None si no se pudo
-    determinar (error de red, página caída, etc).
-    """
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=20)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"  [ERROR] No se pudo descargar {url}: {exc}")
-        return None
+    Abre la página con un navegador headless, espera a que JS termine de
+    renderizar el contenido, y busca las frases de "sin stock".
 
-    html = resp.text
-    if OUT_OF_STOCK_MARKER in html:
-        return False
+    Devuelve True si hay stock, False si no hay, None si no se pudo
+    determinar (error de red, timeout, página caída, etc).
+    """
+    page = None
+    try:
+        page = browser.new_page(user_agent=USER_AGENT, locale="es-AR")
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        # Le damos un margen extra a los componentes que tardan en
+        # consultar el stock después del renderizado inicial.
+        page.wait_for_timeout(3000)
+        html = page.content()
+    except Exception as exc:
+        print(f"  [ERROR] No se pudo cargar {url}: {exc}")
+        return None
+    finally:
+        if page is not None:
+            page.close()
+
+    for marker in OUT_OF_STOCK_MARKERS:
+        if marker in html:
+            return False
     return True
 
 
@@ -111,37 +135,40 @@ def send_telegram_message(text: str) -> None:
 
 def main() -> None:
     state = load_state()
-    results = []  # (product, in_stock, just_changed_to_in_stock)
+    results = []  # (product, in_stock_or_None, just_changed, had_error)
     any_check_failed = False
 
-    for product in PRODUCTS:
-        name = product["name"]
-        url = product["url"]
-        print(f"Chequeando: {name} -> {url}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
 
-        in_stock = check_product_in_stock(url)
+        for product in PRODUCTS:
+            name = product["name"]
+            url = product["url"]
+            print(f"Chequeando: {name} -> {url}")
 
-        if in_stock is None:
-            any_check_failed = True
-            # No se pudo chequear, no tocamos el estado guardado,
-            # pero lo mostramos igual en el resumen como "no se pudo chequear".
+            in_stock = check_product_in_stock(url, browser)
+
+            if in_stock is None:
+                any_check_failed = True
+                previous = state.get(url, {}).get("in_stock")
+                results.append((product, previous, False, True))
+                continue
+
             previous = state.get(url, {}).get("in_stock")
-            results.append((product, previous, False, True))
-            continue
+            just_changed = in_stock and previous is not True
 
-        previous = state.get(url, {}).get("in_stock")
-        just_changed = in_stock and previous is not True
+            status_str = "CON STOCK" if in_stock else "sin stock"
+            print(f"  -> {status_str}")
 
-        status_str = "CON STOCK" if in_stock else "sin stock"
-        print(f"  -> {status_str}")
+            results.append((product, in_stock, just_changed, False))
 
-        results.append((product, in_stock, just_changed, False))
+            state[url] = {
+                "name": name,
+                "in_stock": in_stock,
+                "last_checked": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
 
-        state[url] = {
-            "name": name,
-            "in_stock": in_stock,
-            "last_checked": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
+        browser.close()
 
     save_state(state)
 
