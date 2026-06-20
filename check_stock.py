@@ -3,9 +3,12 @@
 Bot de aviso de stock - Barras de sonido Samsung Argentina
 
 Chequea si ciertos modelos de barra de sonido tienen stock en
-shop.samsung.com/ar y samsung.com/ar, y avisa por Telegram SOLO
-cuando un producto pasa de "sin stock" a "con stock" (para no
-mandar el mismo aviso una y otra vez).
+shop.samsung.com/ar y samsung.com/ar, y en CADA corrida te manda por
+Telegram un resumen del estado de los 3 modelos (con o sin stock).
+
+Si alguno pasó de "sin stock" a "con stock" desde la corrida anterior,
+ese ítem se destaca arriba de todo con 🟢 para que no se pierda entre
+el resto.
 
 El estado anterior se guarda en stock_state.json, que el workflow
 de GitHub Actions commitea de vuelta al repo en cada corrida.
@@ -108,7 +111,8 @@ def send_telegram_message(text: str) -> None:
 
 def main() -> None:
     state = load_state()
-    newly_in_stock = []
+    results = []  # (product, in_stock, just_changed_to_in_stock)
+    any_check_failed = False
 
     for product in PRODUCTS:
         name = product["name"]
@@ -118,18 +122,20 @@ def main() -> None:
         in_stock = check_product_in_stock(url)
 
         if in_stock is None:
-            # No se pudo chequear, no tocamos el estado guardado.
+            any_check_failed = True
+            # No se pudo chequear, no tocamos el estado guardado,
+            # pero lo mostramos igual en el resumen como "no se pudo chequear".
+            previous = state.get(url, {}).get("in_stock")
+            results.append((product, previous, False, True))
             continue
 
         previous = state.get(url, {}).get("in_stock")
+        just_changed = in_stock and previous is not True
 
         status_str = "CON STOCK" if in_stock else "sin stock"
         print(f"  -> {status_str}")
 
-        # Avisamos solo en la transición de False/None -> True,
-        # para no mandar el mismo aviso en cada corrida.
-        if in_stock and previous is not True:
-            newly_in_stock.append(product)
+        results.append((product, in_stock, just_changed, False))
 
         state[url] = {
             "name": name,
@@ -139,14 +145,34 @@ def main() -> None:
 
     save_state(state)
 
+    # --- Armar el mensaje de resumen ---
+    newly_in_stock = [p for p, st, just, err in results if just]
+    in_stock_now = [p for p, st, just, err in results if st is True]
+    out_of_stock_now = [p for p, st, just, err in results if st is False]
+    unknown_now = [p for p, st, just, err in results if err]
+
+    timestamp = time.strftime("%d/%m/%Y %H:%M")
+    lines = [f"📋 <b>Chequeo de stock</b> - {timestamp}", ""]
+
     if newly_in_stock:
-        lines = ["🟢 <b>¡Hay stock!</b>", ""]
+        lines.append("🟢 <b>¡Acaba de entrar en stock!</b>")
         for p in newly_in_stock:
-            lines.append(f"• <b>{p['name']}</b>\n{p['url']}")
-        message = "\n".join(lines)
-        send_telegram_message(message)
-    else:
-        print("Sin novedades de stock en esta corrida.")
+            lines.append(f"• <b>{p['name']}</b>\n  {p['url']}")
+        lines.append("")
+
+    lines.append("<b>Estado actual:</b>")
+    for p in in_stock_now:
+        lines.append(f"✅ {p['name']} - con stock")
+    for p in out_of_stock_now:
+        lines.append(f"⛔ {p['name']} - sin stock")
+    for p in unknown_now:
+        lines.append(f"⚠️ {p['name']} - no se pudo chequear")
+
+    message = "\n".join(lines)
+    send_telegram_message(message)
+
+    if any_check_failed:
+        print("Atención: alguna URL no se pudo chequear en esta corrida.")
 
 
 if __name__ == "__main__":
