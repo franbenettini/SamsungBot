@@ -1,0 +1,42 @@
+name: Chequeo de stock - Barras de sonido Samsung
+
+on:
+  schedule:
+    # Los horarios de cron son en UTC. Argentina está en UTC-3.
+    # 12:00 ARG -> 15:00 UTC
+    # 20:00 ARG -> 23:00 UTC
+    - cron: "0 15 * * *"
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}  # permite correrlo manualmente desde la pestaña Actions
+
+permissions:
+  contents: write  # necesario para poder commitear stock_state.json
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Chequear stock
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python check_stock.py
+
+      - name: Guardar estado actualizado
+        run: |
+          git config user.name "stock-bot"
+          git config user.email "stock-bot@users.noreply.github.com"
+          git add stock_state.json
+          git diff --quiet --cached || git commit -m "Actualiza estado de stock [skip ci]"
+          git push
